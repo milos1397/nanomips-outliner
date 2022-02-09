@@ -65,16 +65,19 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/Comdat.h"                                         // COMDAT
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Mangler.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/SuffixTree.h"
 #include "llvm/Support/raw_ostream.h"
 #include <functional>
 #include <tuple>
 #include <vector>
+#include <iostream>
 
 #define DEBUG_TYPE "machine-outliner"
 
@@ -594,14 +597,33 @@ void MachineOutliner::findCandidates(
 MachineFunction *MachineOutliner::createOutlinedFunction(
     Module &M, OutlinedFunction &OF, InstructionMapper &Mapper, unsigned Name) {
 
+  // COMDAT section to make same hash string for functions with same instructions
+  // that way linker won't make duplicated functions in .elf file
+
+  // hash value for this function string
+  std::array<uint8_t, 32> arrayOfHashDecimals;
+  std::string instrString;    // string of all instructions and operands in OF
+  std::string OpString;
+  raw_string_ostream OpStream(OpString);
+
+  // HashObject is object of class SHA256, and we init + hash that object
+  SHA256 HashObject;
+
+  std::string HexValues;
+  uint64_t decimalValue = 0;
+  
+  //Candidate &Cand = OF.Candidates.front();
+  
+
   // Create the function name. This should be unique.
   // FIXME: We should have a better naming scheme. This should be stable,
   // regardless of changes to the outliner's cost model/traversal order.
   std::string FunctionName = "OUTLINED_FUNCTION_";
-  if (OutlineRepeatedNum > 0)
+  
+  if (OutlineRepeatedNum > 0) 
     FunctionName += std::to_string(OutlineRepeatedNum + 1) + "_";
-  FunctionName += std::to_string(Name);
-
+  //FunctionName += HexValues;
+  
   // Create the function using an IR-level function.
   LLVMContext &C = M.getContext();
   Function *F = Function::Create(FunctionType::get(Type::getVoidTy(C), false),
@@ -609,13 +631,14 @@ MachineFunction *MachineOutliner::createOutlinedFunction(
 
   // NOTE: If this is linkonceodr, then we can take advantage of linker deduping
   // which gives us better results when we outline from linkonceodr functions.
-  F->setLinkage(GlobalValue::InternalLinkage);
+  F->setLinkage(GlobalValue::LinkOnceODRLinkage);
   F->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
 
   // Set optsize/minsize, so we don't insert padding between outlined
   // functions.
   F->addFnAttr(Attribute::OptimizeForSize);
   F->addFnAttr(Attribute::MinSize);
+
 
   // Include target features from an arbitrary candidate for the outlined
   // function. This makes sure the outlined function knows what kinds of
@@ -694,6 +717,7 @@ MachineFunction *MachineOutliner::createOutlinedFunction(
 
   TII.buildOutlinedFrame(MBB, MF, OF);
 
+
   // If there's a DISubprogram associated with this outlined function, then
   // emit debug info for the outlined function.
   if (DISubprogram *SP = getSubprogramOrNull(OF)) {
@@ -725,6 +749,52 @@ MachineFunction *MachineOutliner::createOutlinedFunction(
     // We're done with the DIBuilder.
     DB.finalize();
   }
+
+
+unsigned counter = 0;
+
+   for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
+
+      if (MI.isCFIInstruction() || MI.isDebugInstr()) {
+          continue;
+      }
+      MI.print(OpStream, true, false, false, true, nullptr);
+      counter++;
+    }
+    
+    instrString += OpString;
+  }
+
+std::cout << instrString << "\n";
+std::cout << counter << "\n";
+
+// we have our string, ready to hash.
+// but first, we need to convert it to uint8_t (hash requires that)
+
+const uint8_t *SPtr = reinterpret_cast<const uint8_t *>(instrString.c_str());
+ArrayRef<uint8_t> SArrayRef(SPtr, instrString.size());
+
+// now we init hash object :
+HashObject.init();
+
+arrayOfHashDecimals = HashObject.hash(SArrayRef);
+
+for (unsigned i = 0; i < arrayOfHashDecimals.size(); i++) {
+
+     decimalValue = arrayOfHashDecimals[i]; // decimal values
+     HexValues += Twine::utohexstr(decimalValue).str();  // convert it to hex string value
+  
+}
+
+F->setName("OUTLINED_FUNCTION_" + HexValues);
+
+ // at this point, our Hash has been made (HexValues), so lets put it in the COMDAT section :
+Comdat* NewComdat;
+
+NewComdat = M.getOrInsertComdat(StringRef(HexValues));
+F->setComdat(NewComdat);
+
 
   return &MF;
 }
