@@ -49,8 +49,7 @@ enum MachineOutlinerClass {
   MachineOutlinerDefault,  /// Emit a save, restore, call, and return.
   MachineOutlinerTailCall, /// Only emit a branch.
   MachineOutlinerNoRASave, /// Emit a call and return.
-  MachineOutlinerThunk,    /// Emit a call and tail-call.
-  MachineOutlinerRegSave   /// Same as default, but save to a register.
+  MachineOutlinerThunk    /// Emit a call and tail-call.
 };
 
 enum MachineOutlinerMBBFlags {
@@ -1065,14 +1064,6 @@ outliner::OutlinedFunction MipsInstrInfo::getOutliningCandidateInfo(
          CandidatesWithoutStackFixups.push_back(C);
        }
 
-       // Is an unused register available? If so, we won't modify the stack, so
-       // we can outline with the same frame type as those that don't save RA.
-       else if (findRegisterToSaveRA(C)) {
-         NumBytesNoStackCalls += 12;
-         C.setCallInfo(MachineOutlinerRegSave, 12);
-         CandidatesWithoutStackFixups.push_back(C);
-       }
-
        // Is SP used in the sequence at all? If not, we don't have to modify
        // the stack, so we are guaranteed to get the same frame.
        else if (C.UsedInSequence.available(Mips::SP_NM)) {
@@ -1167,20 +1158,6 @@ outliner::OutlinedFunction MipsInstrInfo::getOutliningCandidateInfo(
         }
 
     if(InstrCounter < MinForOutlineBenefitCall) {   // ako ima 3 instrukcije radimo outline, ako ima manje - ne radimo
-      RepeatedSequenceLocs.clear();
-      return outliner::OutlinedFunction();
-    }
-  }
-
-  if(FrameID == MachineOutlinerRegSave) {   
-
-      for (unsigned Loc = RepeatedSequenceLocs[0].getStartIdx();
-      Loc < RepeatedSequenceLocs[0].getEndIdx() + 1; Loc++) {
-
-        InstrCounter++;
-      }
-
-     if(InstrCounter < MinForOutlineBenefitCallRegSave) { // ako ima 4 instrukcije radimo outline, ako ima manje - ne radimo
       RepeatedSequenceLocs.clear();
       return outliner::OutlinedFunction();
     }
@@ -1341,28 +1318,7 @@ MachineBasicBlock::iterator MipsInstrInfo::insertOutlinedCall(
   MachineInstr *SaveRA;
   MachineInstr *RestoreRA;
 
-  /* MachineOutlinerRegSave implies that the function should be called with a
-   save and restore of RA to an available register. This allows us to avoid
-   stack fixups. Note that this outlining variant is compatible with the
-   NoRASave case. */
-  if (C.CallConstructionID == MachineOutlinerRegSave) {
-
-    unsigned Reg = findRegisterToSaveRA(C);
-    assert(Reg != 0 && "No callee-saved register available?");
-    // save RA + restore RA from Reg  (available register)
-
-   SaveRA = BuildMI(MF, DebugLoc(), get(Mips::MOVE_NM))
-              .addReg(Reg, RegState::Define)
-              .addReg(Mips::RA_NM);
-
-  RestoreRA = BuildMI(MF, DebugLoc(), get(Mips::MOVE_NM))
-              .addReg(Mips::RA_NM, RegState::Define)
-              .addReg(Reg);
-
-  }
-
   // Default case. Save and Restore from stack pointer :
-   else {
 
   SaveRA = BuildMI(MF, DebugLoc(), get(Mips::SAVE_NM))
               .addImm(16)
@@ -1372,7 +1328,7 @@ MachineBasicBlock::iterator MipsInstrInfo::insertOutlinedCall(
               .addImm(16)
               .addReg(Mips::RA_NM, RegState::Define);
 
-  }
+
   It = MBB.insert(It, SaveRA);
   It++;
 
