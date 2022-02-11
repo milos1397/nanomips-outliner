@@ -883,7 +883,7 @@ outliner::OutlinedFunction MipsInstrInfo::getOutliningCandidateInfo(
       for (;;) {
         if (MBBI->modifiesRegister(Mips::SP_NM, &TRI)) {
           switch (MBBI->getOpcode()) {
-          case Mips::ADD:
+          case Mips::ADDiu_NM:
             assert(MBBI->getNumOperands() == 4 && "Wrong number of operands");
             assert(MBBI->getOperand(2).isImm() &&
                    "Expected operand to be immediate");
@@ -897,20 +897,6 @@ outliner::OutlinedFunction MipsInstrInfo::getOutliningCandidateInfo(
             else
               return true;
             break;
-          case Mips::SUB:
-            assert(MBBI->getNumOperands() == 4 && "Wrong number of operands");
-            assert(MBBI->getOperand(2).isImm() &&
-                   "Expected operand to be immediate");
-            assert(MBBI->getOperand(1).isReg() &&
-                   "Expected operand to be a register");
-            // Check if the sub just decrements sp. If so, we search for
-            // matching add instructions that increment sp. If not, the
-            // modification is illegal
-            if (MBBI->getOperand(1).getReg() == Mips::SP_NM)
-              SPValue -= MBBI->getOperand(2).getImm();
-            else
-              return true;
-            break;
           default:
             return true;
           }
@@ -919,7 +905,7 @@ outliner::OutlinedFunction MipsInstrInfo::getOutliningCandidateInfo(
           break;
         ++MBBI;
       }
-      if (SPValue)
+      if (SPValue == 0)
         return true;
       return false;
     };
